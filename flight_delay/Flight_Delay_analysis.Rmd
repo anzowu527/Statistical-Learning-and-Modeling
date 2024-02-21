@@ -1,0 +1,280 @@
+---
+title: "Project 2: Linear Regression"
+author: "Anqi Wu"
+date: "Fall 2023"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    theme: spacelab
+---
+## Basic Dataset Information
+The goal of this project is to use linear regression to model flight delays as a function of other variables.
+
+```{r echo=FALSE, message=FALSE}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+df <- read.csv("/Users/77wu/Desktop/Ostats/P2/flightDelay2.csv")
+dim(df)
+summary(df)
+```
+
+By observing the data frame dimension and summary, we can see that our dataset is comprising 21 columns and 34,314 rows. Among these 21 columns, the 'YEAR' and 'MONTH' columns exhibit constant values, and the 'X' column is filled with missing values (NAs), which are uninformative. DAY_OF_MONTH is also not very useful as flight delay is more likely to be directly related to the time of day, day of the week, or season, rather than the specific year, month, or day of the month.
+
+Furthermore, the 'CANCELLED' and 'DIVERTED' columns contain binary values (0s and 1s), indicating they are categorical columns, and they should be removed because it might be more beneficial to focus on regularly operated flights for the predict flight delay analysis. The 'CARRIER_DELAY,' 'WEATHER_DELAY,' 'NAS_DELAY,' 'SECURITY_DELAY,' and 'LATE_AIRCRAFT_DELAY' columns predominantly consist of 0s, suggesting that only a minority of airline instances experience delays due to these specific reasons.
+
+## Data Preprocessing
+### Removing Columns
+The columns that I am considering removing are YEAR, MONTH,DAY_OF_MONTH, CANCELLED, DIVERTED and X. 
+```{r echo=FALSE, message=FALSE}
+df <- df %>% select(-c(YEAR, MONTH,DAY_OF_MONTH,  CANCELLED, DIVERTED,X))
+dim(df)
+
+```
+We removed 6 columns, so there are 15 columns left.
+
+### Removing Rows by NaNs
+```{r}
+w <- complete.cases(df)
+df <- df[w,]
+dim(df)
+```
+After removing 1007 rows of missing data by complete.cases(), we have have 33307 rows of data left.
+
+### Removing Outliers
+
+#### Log Transformation
+```{r}
+#Log transform the response variable to reduce skewness
+#install.packages("moments")
+library(moments)
+variables_to_analyze <- c("DEP_TIME", "DEP_DELAY", "TAXI_OUT", "WHEELS_OFF", 
+                           "WHEELS_ON", "TAXI_IN", "ARR_TIME", "ARR_DELAY", 
+                           "ACTUAL_ELAPSED_TIME", "DISTANCE", "CARRIER_DELAY", 
+                           "WEATHER_DELAY", "NAS_DELAY", "SECURITY_DELAY", 
+                           "LATE_AIRCRAFT_DELAY")
+
+for (var in variables_to_analyze) {
+  #hist(df[[var]], main=var, xlab=var)
+  cat(var, ':', skewness(df[[var]]), '\n')
+}
+```
+As we can see from the skewness score: DEP_DELAY,TAXI_OUT,TAXI_IN,ARR_DELAY,CARRIER_DELAY,WEATHER_DELAY,NAS_DELAY,SECURITY_DELAY, and LATE_AIRCRAFT_DELAY are highly skewed; WHEELS_ON, ARR_TIME, ACTUAL_ELAPSED_TIME, and DISTANCE are slightly skewed; the rest of the variable are nearly symmetric. 
+```{r}
+df1<-df
+variables_to_transform <- c( "TAXI_OUT", "TAXI_IN","CARRIER_DELAY", 
+                           "WEATHER_DELAY", "NAS_DELAY", "SECURITY_DELAY", 
+                           "LATE_AIRCRAFT_DELAY") 
+for (var in variables_to_transform) {
+  df1[[var]] <- log(df[[var]]+1)
+  #hist(df1[[var]], main=var, xlab=var)
+  cat(var, ':', skewness(df1[[var]]), '\n')
+}
+
+df1$DEP_DELAY <- log(df$DEP_DELAY + 53)
+#hist(df1$DEP_DELAY, main="DEP_DELAY", xlab="DEP_DELAY")
+cat("DEP_DELAY:", skewness(df1$DEP_DELAY, na.rm = TRUE), '\n')
+
+```
+By comparing the skewness scores, we notice that after log transformed the highly skewed variable, we reduced their skewness. 
+
+#### Remove outliers by zscore
+
+```{r}
+var <- names(df1)
+
+df2 <- df1 %>%
+  mutate(across(all_of(var), list(z = ~ (scale(.) %>% as.numeric)), .names = "{col}_z")) %>%
+  filter(if_all(ends_with("_z"), ~abs(.) < 3)) %>%
+  select(-ends_with("_z"))
+summary(df2)
+
+```
+
+We eliminated 4,410 outliers using the z-score method, leaving 28,897 data points for further analysis. After outlier removal, the SECURITY_DELAY column appears to consist solely of zeros. This observation suggests that security delays are exceedingly rare and infrequent within our dataset. Given this lack of variability, the SECURITY_DELAY column may not provide substantial insight for our analysis of delays. Thus, we can exclude this column from our dataset, and we will have 14 columns left.
+
+### Correlation Plot
+```{r echo=FALSE, message=FALSE}
+library(corrplot)
+df3 <- df2 %>%
+  select(-SECURITY_DELAY)
+
+cor_matrix = cor(df3)
+
+corrplot(cor_matrix, method="ellipse", tl.cex = 0.6, tl.col = "black")
+
+correlations1 <- cor(df3$ARR_DELAY, df3[,-which(names(df3) == "ARR_DELAY")], use="complete.obs")
+corrplot(correlations1, method="ellipse",tl.cex = 0.6, tl.col = "black")
+
+```
+
+By observing the correlation plot, we can see there are 15 strongly correlated pairs of variables:  (DEP_TIME,WHEELS_ON),(DEP_TIME, WHEEL_OFF),(DEP_TIME,ARR_TIME),(DEP_DELAY,ARR_DELAY),(DEP_DELAY,CARRIER_DELAY),(DEP_DELAY,LATE_AIRCRAFT_DELAY),(WHEELS_OFF,WHEELS_ON),(WHEELS_OFF,ARR_TIME),(WHEELS_ON,ARR_TIME),(TAXI_OUT,NAS_DELAY),(ARR_DELAY,CARRIER_DELAY),(ARR_DELAY,NAS_DELAY), (ARR_DELAY, LATE_AIRCRAFT_DELAY),(ARR_DELAY, TAXI_OUT), (ACTUAL_ELAPSED_TIME,DISTANCE).
+
+Within these 15 pair, there are 5 variables that are correlated with the response variable ARR_DELAY: DEP_DELAY, TAXI_OUT, CARRIER_DELAY, NAS_DELAY, and LATE_AIRCRAFT_DELAY.
+
+### Split Data to Training set and Test set
+```{r echo=FALSE, message=FALSE}
+library(caret)
+```
+```{r}
+set.seed(777) 
+
+splitIndex <- createDataPartition(df3$ARR_DELAY, p = 0.7, list = FALSE)
+trainSet <- df3[splitIndex, ]
+testSet <- df3[-splitIndex, ]
+```
+To ensure consistency and reproducibility in our analysis, I initialized the random number generator with a specific seed value. Following this, I partitioned the dataset, allocating 70% of the data for training purposes and reserving the remaining 30% for testing. This split facilitates model training while also allowing for robust evaluation and validation of the model’s performance on unseen data.
+
+My training data has 20229 rows while test set has 8668 rows.
+
+### Linear Regression on Full dataset
+```{r}
+model <- lm(ARR_DELAY ~ ., data = df3)
+summary(model)
+```
+
+Upon examining the summary of the linear regression model, it is evident that the variables DEP_DELAY, TAXI_OUT, TAXI_IN, ACTUAL_ELAPSED_TIME, DISTANCE, CARRIER_DELAY, NAS_DELAY, and LATE_AIRCRAFT_DELAY exhibit extremely small p-values, coupled with relatively large absolute values of their coefficients. This suggests a statistically significant relationship with ARR_DELAY. While some of these relationships align with our observations from the correlation plot, indicating a strong correlation with ARR_DELAY, others were not as apparent in the initial analysis.
+
+As the Multiple R-squared and Adjusted R-squared are pretty close to 1, this indicates that our model has a good fit.
+
+### predicted response vs. observed response
+```{r}
+#perform linear regression on trainSet
+model1 <- lm(ARR_DELAY ~ ., data = trainSet)
+#model summary
+summary(model1)
+#calculate predictions on the test set
+predicted_values <- predict(model1, newdata = testSet)
+#calculate mean square error
+mse <- mean((testSet$ARR_DELAY - predicted_values)^2)
+print(paste("The mse is:", mse))
+
+#diagnostics plot
+ggplot(data = testSet, aes(x = predicted_values, y = ARR_DELAY)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "pink") +
+  labs(title = "Predicted vs Observed Responses",
+       x = "Predicted ARR_DELAY",
+       y = "Observed ARR_DELAY") +
+  theme_minimal()
+```
+
+The adjusted R-squared of the linear model of the trainSet is 0.8488, which is pretty high and close to 1, so it the linear model is useful in this case. 
+
+### Residuals
+```{r echo=FALSE, message=FALSE}
+residuals <- testSet$ARR_DELAY - predicted_values
+hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col = "pink", border = "white")
+
+```
+
+Since the residuals of the fit are normally distributed, we do not need to transform the response variable.
+
+### Cariance-Inflation factors
+```{r}
+library(car)
+# compute VIF
+vif_values <- vif(model1)
+print(vif_values)
+```
+
+By interpreting the VIF values, we will say that DEP_TIME, WHEELS_OFF, WHEELS_ON, ARR_TIME, ACTUAL_ELAPSED_TIME, and DISTANCE are potentially problematic variables. Since there are more than one variable that has high VIF value, we can conclude that it appears that there is substantial multicollinearity in our model.
+
+### Best-Subset Selection Analysis
+```{r echo=FALSE, message=FALSE}
+library(bestglm)
+library(leaps)
+```
+```{r}
+w <- which(names(trainSet)=="ARR_DELAY")
+y <- trainSet[,w]
+trainSet <- trainSet[,-w]
+trainSet <- data.frame(trainSet,"y"=y)
+
+out.bg.bic <- bestglm(trainSet,family=gaussian,IC="BIC")
+out.bg.aic <- bestglm(trainSet,family=gaussian,IC="AIC")
+
+out.bg.bic$BestModels
+out.bg.aic$BestModels
+```
+
+BIC's best model has 10 predicator variables. (no ARR_TIME, WHEELS_ON, and WEATHER_DELAY)
+AIC's best model has 10 predicator variables. (no DEP_TIME, WHEELS_OFF, and WEATHER_DELAY)
+Since BIC tends to underfit, all the predicator variables except ARR_TIME, WEATHER_DELAY, and WHEELS_ON are garenteed important. Also, AIC has ARR_TIME, and WHEELS_ON included, so we can conclude that all the predicator variables except WEATHER_DELAY are important. 
+Our best model will remove the WEATHER_DELAY column, and have 13 columns left.
+
+```{r}
+trainSet_BIC <- trainSet %>%
+  select(-all_of(c("WEATHER_DELAY", "ARR_TIME", "WHEELS_ON")))
+
+bestModel_BIC <- lm(y ~ ., data = trainSet_BIC)
+resp.pred_BIC <- predict(bestModel_BIC, newdata=testSet)
+mse_BIC <- mean((testSet$ARR_DELAY-resp.pred_BIC)^2)
+print(paste("The mse_BIC is:", mse_BIC))
+
+trainSet_AIC <- trainSet %>%
+  select(-all_of(c("WEATHER_DELAY", "DEP_TIME", "WHEELS_OFF")))
+
+bestModel_AIC <- lm(y ~ ., data = trainSet_AIC)
+resp.pred_AIC <- predict(bestModel_AIC, newdata=testSet)
+mse_AIC <- mean((testSet$ARR_DELAY-resp.pred_AIC)^2)
+print(paste("The mse_AIC is:", mse_AIC))
+
+trainSet1 <- trainSet %>%
+  select(-("WEATHER_DELAY"))
+
+bestModel <- lm(y ~ ., data = trainSet1)
+resp.pred<- predict(bestModel, newdata=testSet)
+mse1 <- mean((testSet$ARR_DELAY-resp.pred)^2)
+print(paste("The mse_BSS is:", mse1))
+
+```
+I calculated the mean squared errors (MSE) for the best models selected based on both BIC and AIC criteria. However, none of these models resulted in a lower MSE than the model that combines the strengths of both criteria. Therefore, I have decided to select this combined model as the best model for our analysis. Moving forward, I will use the MSE of this combined model as the point of comparison against the original model.
+
+The previous mse before variable selection for the original test set (with full set of predictors) is 42.61277, which is greater than 42.61153. This means that variable selection does improve our model's predictive accuracy. 
+
+###  PCA analysis
+#### Elbow Method to find # of PC to keep 
+```{r}
+#remove respond variable from trainset
+trainSet2 <- trainSet %>% select(-y)
+
+pca.out <- prcomp(trainSet2, center = TRUE, scale. = TRUE)
+v <- pca.out$sdev^2 / sum(pca.out$sdev^2)
+vc <- cumsum(v)
+df_pca <- data.frame(PC = 1:length(vc), Variance = vc)
+ggplot(df_pca, aes(x = PC, y = Variance)) +
+  geom_line() +
+  geom_point() +
+  ylim(0, 1) +
+  ggtitle("Cumulative Proportion of Variance Explained") +
+  xlab("Principal Components") +
+  ylab("Cumulative Proportion")
+
+```
+
+From the output, we can observe that the rate of increase in the cumulative proportion of variance explained slows down after Principal Components reaches 10. Thus, I will say that we will keep 10 principal components for our analysis.
+
+#### Perform Linear Regression on the first 10 PCs
+```{r}
+pc_train <- as.data.frame(pca.out$x[, 1:10])
+pc_train$ARR_DELAY <- trainSet$y
+model_pca <- lm(ARR_DELAY ~ ., data = pc_train)
+
+pc_test <- predict(pca.out, newdata = testSet[, -which(names(testSet) == "ARR_DELAY")])
+pc_test <- as.data.frame(pc_test[, 1:10])
+
+predictions <- predict(model_pca, newdata = pc_test)
+
+mse_pca <- mean((testSet$ARR_DELAY - predictions)^2)
+print(paste("The mse_pca is:", mse_pca))
+
+```
+
+The full-set MSE stands at 42.61277, while the BSS and PCA MSEs are 42.61153 and 55.58042, respectively. The higher MSE from the PCA model, utilizing 10 principal components, indicates a suboptimal fit. 
+
+Upon increasing the number of principal components, a noticeable decline in MSE occurs, reaching its lowest at 12 principal components, aligning with the results obtained through BSS. 
+
+This suggests that the predictor variables' "true" dimensionality is indeed 12. Consequently, to achieve the minimum MSE, the inclusion of the following predictor variables is recommended: DEP_TIME, DEP_DELAY, TAXI_OUT, WHEELS_OFF, WHEELS_ON, TAXI_IN, ARR_TIME, ACTUAL_ELAPSED_TIME, DISTANCE, CARRIER_DELAY, NAS_DELAY, and LATE_AIRCRAFT_DELAY.

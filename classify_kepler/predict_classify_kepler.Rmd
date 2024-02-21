@@ -1,0 +1,288 @@
+---
+title: "Project 3: Classification"
+author: "36-600"
+date: "Fall 2023"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    theme: spacelab
+---
+
+ 
+
+## Data
+
+You will examine the dataset `kepler2.csv`, which you will find in the `DATA` directory on `Canvas`.
+
+The response variable is `label` (either `CONFIRMED` or `FALSE POSITIVE`...by default, `CONFIRMED` is Class 0 due to alphabetical order). Your goal is prediction! We don't care about that multicollinearity "stuff" here.
+
+The predictor variables are the following:
+
+| group | variables |
+| ----  | --------- |
+| exoplanet orbit-related | period, incl, dor |
+| transit/eclipse-related | impact, duration, depth |
+| exoplanet property-related | ror, prad, teq |
+| host star property-related | srho, steff, slogg, smet, srad, smass |
+
+## EDA
+```{r echo=FALSE, message=FALSE}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+df <- read.csv("/Users/77wu/Desktop/Ostats/P3/kepler2.csv")
+dim(df)
+```
+Our data consists of 6859 rows and 16 columns, where all the predictive columns are numerical and the response column is categorical. Then, I decided to scale the depth and steff column and then set the 'CONFIRMED' label to 0 and 'FALSE POSITIVE' to 1 for the convenience of plotting:
+```{r}
+df1 <- df
+non_predictive_cols <- c("label")
+df1[, !(names(df) %in% non_predictive_cols)] <- scale(df[, !(names(df) %in% non_predictive_cols)])
+
+df1 <- df1 %>%
+  mutate(label = case_when(label == "CONFIRMED" ~ 0, label == "FALSE POSITIVE" ~ 1))
+```
+### Outliers
+```{r echo=FALSE, message=FALSE}
+long_df <- tidyr::gather(df1, key = "Variable", value = "Value")
+
+# Create box plots
+ggplot(long_df, aes(x = Variable, y = Value)) + 
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+By plotting the boxplot with the standardized columns, we can observe that there are a couple standout outliers that are far apart from the majority. However, by observing the plot, it is obvious that if we remove outliers by the Interquartile Range (IQR) method, we will be removing a very large amount of data, which is not a good choice. Thus, I will try to remove the outliers by z-score as an alternative method since we have a big dataset and this method take into account the central tendency and dispersion of the entire dataset. Also, as the significant abnormal observations occur in the impact, ror, prad, and srad columns, which are across three of the four different predictor variable groups, I decided to remove them as they do not show any natural variability:
+```{r echo=FALSE, message=FALSE}
+var <- names(df1)
+
+df2 <- df1 %>%
+  mutate(across(all_of(var), list(z = ~ (scale(.) %>% as.numeric)), .names = "{col}_z")) %>%
+  filter(if_all(ends_with("_z"), ~abs(.) < 3)) %>%
+  select(-ends_with("_z"))
+
+long_df <- tidyr::gather(df2, key = "Variable", value = "Value")
+
+ggplot(long_df, aes(x = Variable, y = Value)) + 
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+dim(df2)
+```
+The plot above is the boxplots of the columns with outliers removed by z-score. It seems like we removed 1208 rows and have 5651 rows left, which the outliers are 17.6% of the data. Thus, I considered to keep those datapoints to avoid removing too much data.
+
+## Splitting data
+```{r}
+#library(caret)
+
+df2 <- df %>%
+  mutate(label = case_when(
+    label == "CONFIRMED" ~ 0, 
+    label == "FALSE POSITIVE" ~ 1
+  ))
+
+numeric_columns <- sapply(df2, is.numeric) & names(df2) != "label"
+df2[numeric_columns] <- scale(df2[numeric_columns])
+
+# Splitting the data into training and test sets
+set.seed(777)
+s <- sample(nrow(df2), round(0.7 * nrow(df2)))
+train <- df2[s, ]
+test <- df2[-s, ]
+
+# Separating predictors and response
+pred.train <- train[, !(names(train) %in% 'label')]
+pred.test <- test[, !(names(test) %in% 'label')]
+resp.train <- train$label
+resp.test <- test$label
+```
+To prepare my dataset for ML analysis, I split it into training and testing sets with a 70-30% split. The dataset df was divided into train and test sets based on the label column, and then I separated the predictive variables and response variable for both sets, ensuring a consistent structure for model training and evaluation. I also set a seed value of 777 to make the process reproducible.
+
+## Logistic Regression:
+
+```{r}
+log.out <- glm(label ~ ., data = train, family = "binomial")
+
+# Predicting on the test set
+predicted_prob <- predict(log.out, newdata = test, type = "response")
+
+library(pROC)
+# Calculate Metrics (ROC, AUC, Youden's J, Accuracy, MCR)
+calculate_metrics <- function(test_data, predicted_prob) {
+  roc_out <- roc(test_data$label, predicted_prob)
+  auc_value <- auc(roc_out)
+  youden_j <- roc_out$sensitivities + roc_out$specificities - 1
+  optimal_index <- which.max(youden_j)
+  optimal_threshold <- round(roc_out$thresholds[optimal_index],3)
+
+  predicted_class <- ifelse(predicted_prob > optimal_threshold, 1, 0)
+  confusion_matrix <- table(Predicted = predicted_class, Actual = test_data$label)
+
+  accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+  MCR <- mean(predicted_class != test_data$label)
+
+  list(roc_out = roc_out, auc = auc_value, optimal_threshold = optimal_threshold, 
+       accuracy = accuracy, MCR = MCR, confusion_matrix = confusion_matrix)
+}
+metrics_log <- calculate_metrics(test, predicted_prob)
+
+# Print Metrics and Plot ROC Curve
+print(paste("Logistic AUC:", metrics_log$auc))
+print(paste("Logistic optimal_threshold:", metrics_log$optimal_threshold))
+print(paste("Logistic Accuracy:", metrics_log$accuracy))
+print(paste("Logistic MCR:", metrics_log$MCR))
+print(metrics_log$confusion_matrix)
+
+# Plotting ROC Curve
+plot(metrics_log$roc_out, main = "Logistic model ROC Curve", col = "#1c61b6")
+abline(a = 0, b = 1, col = "red", lty = 2)
+
+```
+
+The logistic model does perform well on the data as the accuracy is high and the misclassification rate is low with the optimal threshold. Also, the high value in AUC indicates that this model is good at separating the CONFIRMED group and the FALSE POSITIVE group.
+
+## Random Forest
+
+```{r echo=FALSE, message=FALSE}
+library(randomForest)
+rf.out = randomForest(resp.train~.,data=pred.train,importance=TRUE)
+resp.pred = predict(rf.out,newdata=pred.test)
+
+# Using the calculate_metrics function
+metrics_rf <- calculate_metrics(test, resp.pred)
+
+# Print and analyze the metrics
+print(paste("RandomForest AUC:", metrics_rf$auc))
+print(paste("RandomForest optimal_threshold:", metrics_rf$optimal_threshold))
+print(paste("RandomForest Accuracy:", metrics_rf$accuracy))
+print(paste("RandomForest MCR:", metrics_rf$MCR))
+print(metrics_rf$confusion_matrix)
+
+varImpPlot(rf.out,type=1,main="Random Forest Variable Important Plot",scale=TRUE)
+# Plotting ROC Curve
+#plot(metrics_rf$roc_out, main = "RandomForest model ROC Curve", col = "#1c61b6")
+#abline(a = 0, b = 1, col = "red", lty = 2)
+```
+From the Random Forest Variable important plot, we can see that dor,smet, srho columns are more important than the others.
+
+## Gradient Boosting (xgboost)
+```{r echo=FALSE, message=FALSE}
+library(xgboost)
+train1 = xgb.DMatrix(data=as.matrix(pred.train),label=resp.train)
+test1 = xgb.DMatrix(data=as.matrix(pred.test),label=resp.test)
+set.seed(777)
+xgb.cv.out = xgb.cv(params=list(objective="reg:squarederror"),train1,nrounds=30,nfold=5,verbose=0)
+cat("The optimal number of trees is ",which.min(xgb.cv.out$evaluation_log$test_rmse_mean),"\n")
+
+xgb.out <- xgboost(train1,
+                   nrounds=which.min(xgb.cv.out$evaluation_log$test_rmse_mean),
+                   params=list(objective="binary:logistic"),
+                   verbose=0)
+
+resp.pred <- predict(xgb.out,newdata=test1)
+
+metrics_xgb <- calculate_metrics(test, resp.pred)
+
+# Print and analyze the metrics
+print(paste("Gradient Boosting AUC:", metrics_xgb$auc))
+print(paste("Gradient Boosting optimal_threshold:", metrics_xgb$optimal_threshold))
+print(paste("Gradient Boosting Accuracy:", metrics_xgb$accuracy))
+print(paste("Gradient Boosting MCR:", metrics_xgb$MCR))
+print(metrics_xgb$confusion_matrix)
+
+# Plotting ROC Curve
+#plot(metrics_xgb$roc_out, main = "Gradiant boosting model ROC Curve", col = "#1c61b6")
+#abline(a = 0, b = 1, col = "red", lty = 2)
+
+# variable importance
+imp.out = xgb.importance(model=xgb.out)
+xgb.plot.importance(importance_matrix=imp.out,col="blue", main="Gradiant boosting Variable Important Plot")
+
+```
+From the Gradiant Boosting Variable important plot, we can see that prad, dor, and period columns are more important than the others.Combine with the observation above, dor is confirmed to be a very important variable.
+
+
+
+## K-nearest neighbour
+```{r echo=FALSE, message=FALSE}
+library(FNN)
+
+# Finding the optimal number of neighbors
+mcr.k <- rep(NA, 30)
+for (kk in 1:30) {
+  knn.out <- knn.cv(train = pred.train, cl = resp.train, k = kk)
+  mcr.k[kk] <- mean(knn.out != resp.train)
+}
+k.min <- which.min(mcr.k)
+cat("The optimal number of nearest neighbors is ", k.min, "\n")
+
+# Plotting MCR vs. k
+plot(1:30, mcr.k, type = "b", xlab = "Number of Neighbors (k)", 
+     ylab = "Validation-Set MCR", main = "MCR vs. k in k-NN Classification")
+abline(v = k.min, col = "red", lty = 2)
+
+knn.out <- knn(train = pred.train, test = pred.test, cl = resp.train, k = k.min,prob=TRUE)
+class_proportions <- attr(knn.out, "prob")
+actual_classes <- as.numeric(as.character(resp.test)) - 1
+
+#finding AUC
+KNN_roc_out <- roc(actual_classes, class_proportions)
+KNN_auc <- auc(KNN_roc_out)
+print(paste("KNN AUC:", KNN_auc))
+#confusion_matrix
+confusion_matrix <- table(Predicted = knn.out, Actual = resp.test)
+KNN_accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+KNN_mcr <- mean(knn.out != resp.test)
+
+print(paste("KNN Accuracy:", KNN_accuracy))
+print(paste("KNN MCR:", KNN_mcr))
+print(confusion_matrix)
+
+# Plotting ROC Curve
+#plot(KNN_roc_out, main = "KNN ROC Curve", col = "#1c61b6")
+#abline(a = 0, b = 1, col = "red", lty = 2)
+
+
+```
+## Model Comparison
+```{r}
+model_comparison <- data.frame(
+  Model = c("Logistic", "RandomForest", "Gradient Boosting", "KNN"),
+  AUC = c(metrics_log$auc, metrics_rf$auc, metrics_xgb$auc, KNN_auc),
+  MCR = c(metrics_log$MCR, metrics_rf$MCR, metrics_xgb$MCR, KNN_mcr)
+)
+
+print(model_comparison)
+
+```
+## ROC curves comparison between models
+```{r}
+library(pROC)
+
+# Plot the first ROC curve (e.g., Logistic)
+plot(metrics_log$roc_out, main = "Model Comparison ROC Curves", col = "blue", lwd = 2)
+
+# Add the ROC curve for RandomForest
+lines(metrics_rf$roc_out, col = "green", lwd = 2)
+
+# Add the ROC curve for Gradient Boosting
+lines(metrics_xgb$roc_out, col = "orange", lwd = 2)
+
+# Add the ROC curve for KNN (assuming KNN_roc_out is defined)
+lines(KNN_roc_out, col = "purple", lwd = 2)
+
+# Add a diagonal line for reference
+abline(a = 0, b = 1, col = "red", lty = 2)
+
+# Add a legend
+legend("bottomright", legend = c("Logistic", "RandomForest", "Gradient Boosting", "KNN"), 
+       col = c("blue", "green", "orange", "purple"), lwd = 2)
+
+```
+
+### By the table and the ROC curves, we can conclude that RandomForest model work the best on this data as it have a high AUC, and low MCR compared to other models. RandomForest's optimal probability threshold and the confusion matrix given that threshold is the following:
+```{r}
+print(paste("RandomForest optimal_threshold:", metrics_rf$optimal_threshold))
+metrics_rf$confusion_matrix
+```
