@@ -1,0 +1,202 @@
+---
+title: "Examining Bird Diversity"
+author: "Anqi Wu"
+date: "2023-09-28"
+output: html_document
+---
+
+## Basic Dataset Information
+This analysis delves into the heart of avian genetics, focusing on heterozygosity, to uncover patterns that shape our understanding of bird populations and their resilience.
+
+
+```{r echo=FALSE, message=FALSE}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+df <- read.csv("/Users/77wu/Desktop/Ostats/P1/bird-diversity.csv",colClasses=c("character","factor","numeric","numeric","numeric","numeric","numeric","factor","character"))
+dim(df)
+summary(df)
+```
+This dataset contains 387 rows and 9 columns. The 'Species' and 'References' columns are of character type, while 'Family' and 'Migratory.status' are categorical variables. The columns 'Heterozygosity', 'Allelic.richness', 'Breeding.range.size', 'Body.mass', and 'Latitude' are numerical.
+
+## Data Cleaning
+### Missing Value
+```{r echo=FALSE}
+missingValue <- colSums(is.na(df))
+print(missingValue)
+```
+There are no missing values in this data set.
+### Uninformative Columns
+```{r echo=FALSE}
+df <- df %>% 
+  select(.,-References)
+```
+The reference column provides the source from which each row of data originates. However, it is less relevant and uninformative because it doesn't offer direct insights into the patterns or relationships. Thus, I removed the 'Reference' column.
+
+### Outliers
+I will first plot out the numerical columns using different graphs to observe their distribution and decide how to remove the outliers.
+```{r echo=FALSE}
+
+#boxplot => Heterozygosity
+boxplot(df$Heterozygosity, main="Heterozygosity Boxplot", ylab="Values",xlab="Heterozygosity")
+
+#histogram => Allelic Richness 
+hist(df$Allelic.richness, 
+     main="Histogram of Allelic Richness", 
+     xlab="Allelic Richness", 
+     ylab="Frequency",
+     col="pink", 
+     border="grey")
+
+#density plot => Breeding range size
+ggplot(df, aes(x = Breeding.range.size)) +
+  geom_density(fill = "pink", color = "black") +
+  labs(title = "Kernel Density Plot", x = "Breeding Range Size", y = "Density") +
+  theme_minimal()
+data_density <- density(df$Breeding.range.size)
+peak_x <- data_density$x[which.max(data_density$y)]
+peak_x
+
+#boxplot => BodyMass
+boxplot(df$Body.mass, main="BodyMass Boxplot", ylab="Values",xlab="BodyMass")
+
+#violin plot => Latitude
+ggplot(df, aes(x = "", y = Latitude)) +
+  geom_violin(fill = "pink") +
+  labs(title = "Violin Plot of Latitude", y = "Latitude") +
+  theme_minimal()
+
+dim(df)
+```
+```
+I employed four distinct plotting methods to identify outliers in our numerical variables. For Heterozygosity and Body Mass, I utilized boxplots. These plots revealed the outliers using the quartiles, represented by dots. Notably, Heterozygosity displays several exceptionally small values, while Body Mass showcases many values exceeding the 3rd quartile.
+
+To assess the distribution of Allelic Richness, I turned to a histogram. This revealed a right-skewed distribution, with a scant number of data points reflecting Allelic Richness values above 20.
+
+I used the Kernel Density Plot to portray the distribution of the Breeding Range Size. The peak of this plot emerges around 150. Through further calculations, we discerned that this peak aligns with a breeding range size of roughly 141, indicating a dense cluster of data points around this value. Additionally, this density plot is markedly right-skewed, a trait likely influenced by several exceptionally large breeding range sizes.
+
+The distribution of the Latitude column is visualized using a Violin Plot. The shape of this plot is predominantly uniform, albeit tapering sharply at its apex. This likely signifies that a minimal number of outliers are elongating the plot's appearance.
+
+```
+#### Use IQR to find out and Remove Outliers
+
+```{r}
+for (column in c("Heterozygosity", "Allelic.richness", "Breeding.range.size", "Latitude")) {
+  Q1 <- quantile(df[[column]], 0.25)  # First quartile (25%)
+  Q3 <- quantile(df[[column]], 0.75)  # Third quartile (75%)
+  IQR <- Q3 - Q1
+  
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  
+  # Filter out the outliers from the df
+  df <- df[df[[column]] >= lower_bound & df[[column]] <= upper_bound, ]
+}
+dim(df)
+```
+```
+After the visualizations, I will proceed to remove the outliers. Using the IQR method, I plan to eliminate data points that fall below the first quartile or exceed the third quartile. However, in the case of the "Body Mass" column, we observed many data points lying outside the 3rd quartile. Removing these would result in a significant loss of data. Given that birds can vary greatly in size, we expect to see a broad spectrum of body masses. Therefore, I have decided not to remove any data points from the "Body Mass" column. The larger values might not necessarily be outliers in a biological context but rather indicative of larger bird species.
+
+There are 327 row left after taking away the outliers.
+```
+
+### Heterozygosity vs. Other Variables
+
+#### Heterozygosity vs. Numerical variables
+```{r echo=FALSE}
+
+#plotting a scatterplot to examine the correlation between Heterozygosiy and other numeric variables
+df.new <- df %>% dplyr::select(.,-Species,-Family,-Heterozygosity,-Migratory.status) %>% gather(.) 
+num.var <- df %>% dplyr::select(.,-Species,-Family,-Heterozygosity,-Migratory.status) %>% ncol(.)
+ggplot(data=df.new,mapping=aes(x=value,y=rep(df$Heterozygosity,num.var))) + 
+  geom_point(size=0.1,col="firebrick") +
+  facet_wrap(~key,scales='free_x') + 
+  xlab("Value") +
+  ylab("Heterozygosity")
+
+#further investigate by plotting a corrplot
+library(corrplot)
+numeric_df <- df[, sapply(df, is.numeric)]
+correlations <- cor(numeric_df$Heterozygosity, numeric_df[,-which(names(numeric_df) == "Heterozygosity")], use="complete.obs")
+
+corrplot(correlations, method="ellipse")
+```
+```
+From the scatter plot above, it's evident that Allelic richness is the only numerical feature positively correlated with Heterozygosity.
+
+Using the correlation plot, we found that body mass also has a weak negative correlation with the response variable, while Allelic richness exhibits a strong positive correlation with Heterozygosity. This is evidenced by its narrower ellipse and blue color, which signify a strong relationship.
+```
+#### Heterozygosity vs. Categorical variables
+
+```{r echo=FALSE}
+# Calculate the order of families based on mean Heterozygosity
+family_order <- df %>%
+  group_by(Family) %>%
+  summarise(mean_heterozygosity = mean(Heterozygosity, na.rm = TRUE)) %>%
+  arrange(mean_heterozygosity) %>%
+  pull(Family)
+
+# Convert Family column to a factor with the family_order
+df$Family <- factor(df$Family, levels = family_order)
+
+ggplot(data=df, aes(x=Family, y=Heterozygosity)) +
+  geom_boxplot(col="sienna", fill="turquoise") +
+  xlab("Family") +
+  ylab("Heterozygosity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
+
+```
+```
+I plotted "Family" versus "Heterozygosity", arranging the families in order based on the mean Heterozygosity of each family. This arrangement provides a clearer visualization, making it easier to identify which families have higher average heterozygosity—a trait indicative of greater resilience to environmental changes. From the plot, setting aside families with a small sample size, we can infer that both Columbiformes and Cuculiformes have higher average heterozygosity compared to other families.
+```
+```{r echo=FALSE}
+#dotplot of Migratory.status vs. Heterozygosity
+ggplot(df, aes(x = Migratory.status, y = Heterozygosity)) +
+  geom_dotplot(binaxis = "y", stackdir = "center",colour = "red", binwidth = 0.02) +
+  xlab("Migratory Status") +
+  ylab("Heterozygosity") +
+  theme_minimal()
+```
+```
+From the dotplot above, we observe that birds with a "resident" status generally exhibit higher heterozygosity across a greater number of samples. In contrast, for birds with a "migratory" status, the majority of samples display heterozygosity values between 0.5 and 0.6. This observation aligns with our expectations: resident birds are more likely to adapt to their environment and remain in one area, whereas migratory birds tend to move around.
+```
+
+## Interesting Exploratories
+```{r echo=FALSE}
+df %>%
+  group_by(., Migratory.status)%>%
+  summarize(., Number=n())
+
+ggplot(data=df, mapping=aes(x=Latitude, fill=Migratory.status)) +
+  geom_histogram(alpha=0.2, position="Identity", color="grey", binwidth=2) +
+  xlim(0, 90) +
+  labs(fill="Migratory.status")
+```
+```
+I calculated that 125 birds fall into the migratory category, while 202 are in the resident category. From the overlapping histogram above, we observe a higher frequency of migration around latitudes 25 and 40. By examining the proportion of migratory status within each bar, we can discern which latitudes have the highest occurrences of migration and which are predominantly resident. Additionally, it's interesting to note that birds near the equator (latitude 0) tend to be residents of that area, and the birds near the poles tend to be migratory species.
+
+```
+
+```{r echo=FALSE}
+ggplot(data=df,mapping=aes(x=Body.mass)) + # insert response here
+  geom_histogram(color="blue",fill="lightblue",bins=25) +
+  facet_wrap(~Family,scales='free_y')
+```
+```
+The graph above illustrates the correlation between bird families and their respective body masses. We can observe that birds from the Apodiformes, Charadriiformes, Cuculiformes, Passeriformes, Piciformes families exhibit consistent body masses, indicating that birds within these specific families tend to have similar sizes. In contrast, families that I did not mention display more varied body masses. Notably, the Gruiformes family comprises birds with a wide range of body masses.
+```
+```{r}
+# check out the summary of the Allelic.richness value from the Passeriformes and Gruiformes family
+df$Family <- as.character(df$Family)
+summary(df$Allelic.richness)
+summary(df$Allelic.richness[df$Family == "Passeriformes"])
+summary(df$Allelic.richness[df$Family == "Gruiformes"])
+
+
+```
+```
+I chose to observe the Passeriformes and Gruiformes families because the Passeriformes family appears to have a consistent body mass, whereas the Gruiformes family displays a diverse range of sizes. I was curious to see if there's a correlation with allelic richness. Allelic richness measures genetic diversity, indicating a population's long-term adaptability potential. A higher value suggests greater adaptability of a species to new environments.
+
+Upon examining the allelic richness of these two families, it's evident that the samples from Passeriformes generally have higher values than those from the Gruiformes family. This observation aligns with the idea that as species become more adaptable to their environment, they may evolve convergent traits that best suit their surroundings. In this context, members of the Passeriformes family have standardized their body size, reflecting a higher degree of adaptation. In contrast, the Gruiformes family, displaying a more varied body mass, suggests that its members might not be as uniformly adapted to their environment.
+```
