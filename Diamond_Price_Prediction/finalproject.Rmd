@@ -1,0 +1,374 @@
+---
+title: "Project 3: Classification"
+author: "36-600"
+date: "Fall 2023"
+output:
+  html_document:
+    toc: false
+    toc_float: false
+    theme: spacelab
+---
+
+ 
+Feature Engineering
+```{r}
+diamonds <- read.csv("/Users/77wu/Desktop/CMU 2023 Fall/Ostats/final project/diamonds.csv")
+diamonds <- diamonds[ , !(names(diamonds) %in% 'X')]
+
+nrow(diamonds)
+
+```
+```{r}
+suppressMessages(library(dplyr))
+suppressMessages(library(ggplot2))
+suppressMessages(library(tidyr))
+
+diamonds_long <- diamonds %>% 
+  select(carat, x, y, z, table, depth, price) %>% 
+  gather(key = "variable", value = "value", -price)
+
+ggplot(diamonds_long, aes(x = price, y = value, color = variable)) +
+  geom_point(alpha = 0.7) +  # Increased alpha for better visibility
+  facet_wrap(~variable, scales = "free_y") +
+  labs(title = "Faceted Scatter Plots of Price vs Quantitative Variables",
+       x = "Price",
+       y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "bottom") 
+```
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+
+# Reorder the levels of the categorical variables as specified
+diamonds$cut <- factor(diamonds$cut, levels = c("Fair", "Good", "Very Good", "Premium", "Ideal"))
+diamonds$color <- factor(diamonds$color, levels = c("J", "I", "H", "G", "F", "E", "D"))
+diamonds$clarity <- factor(diamonds$clarity, levels = c("I1", "SI2", "SI1", "VS2", "VS1", "VVS2", "VVS1", "IF"))
+
+# Reshape the diamonds data to include categorical variables in a single column
+diamonds_melted <- melt(diamonds, id.vars = "price", measure.vars = c("cut", "color", "clarity"))
+
+# Generating faceted boxplots with uniform color for each categorical variable
+p <- ggplot(diamonds_melted, aes(x = value, y = price)) +
+  geom_boxplot(aes(fill = variable)) +
+  facet_wrap(~variable, scales = "free_x") +
+  scale_fill_manual(values = c("lightblue1", "deepskyblue2", "dodgerblue2")) +
+  labs(title = "Boxplots of Price vs Cut, Color, Clarity",
+       x = "Category",
+       y = "Price") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "bottom")
+
+# Save the plot
+ggsave("diamonds_boxplots.png", p)
+
+
+```
+```{r}
+suppressMessages(library(dplyr))
+suppressMessages(library(ggplot2))
+suppressMessages(library(tidyr))
+
+# filter out the categorical variable
+diamonds.new <- diamonds %>% select(.,-cut, -color, -clarity) %>% gather(.)
+
+ggplot(data=diamonds.new,mapping=aes(x=value)) +
+geom_histogram(color="blue",fill="yellow",bins=20) +
+facet_wrap(~key, scales='free')
+nrow(diamonds)
+```
+
+```{r}
+diamonds$carat = log(diamonds$carat+1)
+diamonds$price = log(diamonds$price+1)
+
+# Detect outliers with a boxplot:
+diamonds.new <- diamonds %>% select(.,-cut, -color, -clarity) %>% gather(.)
+ggplot(diamonds.new,aes(x = key, y = value))+
+geom_boxplot()+
+labs(x = "Group", y = "Value", title = "Boxplot of Value by Group")
+```
+```{r}
+# Remove outliers from depth and table
+diamonds <- diamonds %>% 
+  filter(depth > 50, depth < 75, table > 50, table < 75, y < 20, z < 20)
+
+# Gather the remaining data for plotting
+diamonds_new <- diamonds %>% 
+  select(-cut, -color, -clarity) %>% 
+  gather(key = "Group", value = "Value")
+
+# Create a boxplot
+ggplot(diamonds_new, aes(x = Group, y = Value)) +
+  geom_boxplot() +
+  labs(x = "Group", y = "Value", title = "Boxplot of Value by Group")
+```
+```{r}
+nrow(diamonds)
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Filter the data for color 'J'
+J_color_data <- diamonds %>%
+  filter(color == "J") %>%
+  select(y, z)
+
+# Melt the data for plotting
+J_color_data_melted <- melt(J_color_data, variable.name = "Dimension", value.name = "Value")
+
+# Plot box plots
+ggplot(J_color_data_melted, aes(x = Dimension, y = Value)) +
+  geom_boxplot() +
+  labs(title = "Box Plots of y and z Dimensions for Diamonds with Color 'J'",
+       x = "Dimension",
+       y = "Value")
+
+```
+```{r}
+```
+```{r}
+summary(diamonds)
+```
+Train test split
+```{r}
+diamonds$cut <- factor(diamonds$cut, levels = c("Fair", "Good", "Very Good", "Premium", "Ideal"))
+diamonds$cut <- as.numeric(diamonds$cut)
+
+# convert calrity to categorical numeric column with order
+diamonds$clarity <- factor(diamonds$clarity, levels = c("I1", "SI1", "SI2", "VS1", "VS2", "VVS1", "VVS2", "IF"), ordered = TRUE)
+diamonds$clarity <- as.numeric(diamonds$clarity)
+
+# convert color to numeric
+diamonds$color <- factor(diamonds$color, levels = c("J", "I", "H", "G", "F", "E", "D"), ordered = TRUE)
+diamonds$color <- as.numeric(diamonds$color)
+
+# the higher the number the better
+
+set.seed(777)
+# seventy thirty split
+trainIndices <- sample(1:nrow(diamonds), size = 0.7 * nrow(diamonds))
+
+# Split the data into training and test sets
+trainData <- diamonds[trainIndices, ]
+testData <- diamonds[-trainIndices, ]
+
+# Separate predictors and response for the training set
+pred.train <- trainData[, !(names(trainData) %in% 'price')]
+resp.train <- trainData$price
+
+# Separate predictors and response for the test set
+pred.test <- testData[, !(names(testData) %in% 'price')]
+resp.test <- testData$price
+```
+```{r}
+nrow(trainData)
+```
+
+Random Forest
+```{r}
+suppressMessages(library(randomForest))
+rf_model <- randomForest(resp.train ~ ., data = pred.train)
+
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = pred.test)
+
+# Evaluate the model
+mse <- mean((predictions - resp.test)^2)
+mse_rounded <- round(mse, 6)
+print(paste("MSE of Random Forest model:", mse_rounded))
+
+ss_res <- sum((resp.test - predictions) ^ 2)
+ss_tot <- sum((resp.test - mean(resp.test)) ^ 2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared_rounded <- round(r_squared, 6)
+print(paste("R squared of Random Forest model:", r_squared_rounded))
+
+```
+
+```{r}
+var_importance <- importance(rf_model)
+importance_df <- data.frame(Variable = rownames(var_importance), 
+                            Importance = var_importance[, "MeanDecreaseAccuracy"])  # or "MeanDecreaseAccuracy"
+library(ggplot2)
+ggplot(importance_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    labs(title = "Variable Importance Plot (VIP) for Random Forest Model",
+         x = "Variables",
+         y = "Importance (Gini Decrease)") +
+    theme_minimal()
+
+```
+```{r}
+suppressMessages(library(randomForest))
+suppressMessages(library(caret))
+
+# Define control using 10-fold cross-validation with MSE
+control <- trainControl(method = "cv", number = 10, summaryFunction = defaultSummary)
+
+# Train the model with cross-validation
+set.seed(123)  # for reproducibility
+rf_model_cv <- train(resp.train ~ ., data = pred.train, method = "rf", trControl = control, metric = "RMSE")
+
+# Summarize the results
+print(rf_model_cv)
+
+
+```
+
+```{r}
+# Fit a linear regression model
+lm_model <- lm(resp.train ~ ., data = pred.train)
+
+# Make predictions on the test set
+predictions <- predict(lm_model, newdata = pred.test)
+
+# Evaluate the model
+mse <- mean((predictions - resp.test)^2)
+mse_rounded <- round(mse, 6)
+print(paste("MSE of Linear Regression model:", mse_rounded))
+
+ss_res <- sum((resp.test - predictions) ^ 2)
+ss_tot <- sum((resp.test - mean(resp.test)) ^ 2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared_rounded <- round(r_squared, 6)
+print(paste("R squared of Linear Regression model:", r_squared_rounded))
+
+```
+
+```{r}
+# Install and load the xgboost package
+if (!require(xgboost)) {
+    install.packages("xgboost")
+    library(xgboost)
+}
+
+suppressMessages(library(car))
+suppressMessages(library(xgboost))
+train = xgb.DMatrix(data=as.matrix(pred.train),label=resp.train)
+test = xgb.DMatrix(data=as.matrix(pred.test),label=resp.test)
+set.seed(101)
+xgb.cv.out = xgb.cv(params=list(objective="reg:squarederror"),train,nrounds=30,nfold=5,verbose=0)
+xgb.out = xgboost(train,nrounds=which.min(xgb.cv.out$evaluation_log$test_rmse_mean),
+params=list(objective="reg:squarederror"),verbose=0)
+resp.pred = predict(xgb.out,newdata=test)
+
+# Calculate Mean Squared Error (MSE)
+mse <- mean((resp.test - resp.pred)^2)
+
+# Calculate R-squared (R2)
+ss_res <- sum((resp.test - resp.pred) ^ 2)
+ss_tot <- sum((resp.test - mean(resp.test)) ^ 2)
+r_squared <- 1 - (ss_res / ss_tot)
+
+# Round the values to three decimal places
+mse_rounded <- round(mse, 6)
+r_squared_rounded <- round(r_squared, 6)
+
+# Print the results
+print(paste("MSE:", mse_rounded))
+print(paste("R-squared:", r_squared_rounded))
+
+```
+
+
+```{r}
+# Install and load the glmnet package
+if (!require(glmnet)) {
+    install.packages("glmnet")
+    library(glmnet)
+}
+
+# Convert predictor data frames to matrices
+pred_train_matrix <- model.matrix(~., data = pred.train)
+pred_test_matrix <- model.matrix(~., data = pred.test)
+
+# Train the Lasso model
+lasso_model <- glmnet(pred_train_matrix, resp.train, alpha = 1)
+
+# Make predictions on the test set
+predictions <- predict(lasso_model, s = 0.01, newx = pred_test_matrix)  
+
+# Evaluate the model
+mse <- mean((predictions - matrix(resp.test, nrow = length(resp.test)))^2)
+mse_rounded <- round(mse, 6)
+print(paste("MSE of Lasso Regression model:", mse_rounded))
+
+ss_res <- sum((matrix(resp.test, nrow = length(resp.test)) - predictions) ^ 2)
+ss_tot <- sum((resp.test - mean(resp.test)) ^ 2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared_rounded <- round(r_squared, 6)
+print(paste("R squared of Lasso Regression model:", r_squared_rounded))
+
+```
+
+KNN
+```{r}
+# Install and load kknn package
+library(kknn)
+
+# Scale the data
+scaled_train <- scale(pred.train)
+scaled_test <- scale(pred.test)
+
+# Convert scaled data back to data frames
+scaled_train_df <- as.data.frame(scaled_train)
+scaled_test_df <- as.data.frame(scaled_test)
+
+# Add the response variable back to the training data frame
+scaled_train_df$price <- resp.train
+
+# Fit the model
+k <- 5 # Number of neighbors
+knn_model <- kknn(price ~ ., train = scaled_train_df, test = scaled_test_df, k = k)
+
+# Predictions
+predictions <- predict(knn_model)
+
+# Evaluate the model
+mse <- mean((resp.test - predictions)^2)
+print(paste("MSE:", mse))
+
+
+```
+```{r}
+ss_res <- sum((resp.test - predictions) ^ 2)
+ss_tot <- sum((resp.test - mean(resp.test)) ^ 2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared_rounded <- round(r_squared, 6)
+print(paste("R squared of KNN Regression model:", r_squared_rounded))
+```
+```{r}
+# Install and load ggplot2 package
+if (!require(ggplot2)) {
+    install.packages("ggplot2")
+    library(ggplot2)
+}
+
+# Example MSE values for models (replace these with your actual values)
+mse_lasso <- 0.054306  # Replace with your Lasso model MSE
+mse_knn <- 0.020866    # Replace with your KNN model MSE
+mse_rf <- 0.008898    # Replace with your Random Forest model MSE
+mse_xgn <- 0.009227
+mse_linear <- 0.055546
+# Add other models as needed
+
+# Create a data frame
+model_mse <- data.frame(
+    Model = c("Random Forest", "xgBoost", "LASSO", "Linear Regression","KNN"),  # Add other model names as needed
+    MSE = c(mse_rf, mse_xgn,mse_lasso,mse_linear,mse_knn)          # Add other MSE values as needed
+)
+
+ggplot(model_mse, aes(x = Model, y = MSE, fill = Model)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = round(MSE, 4)), vjust = -0.3, color = "black") +
+    theme_minimal() +
+    labs(title = "MSE Comparison of Models", x = "Model", y = "MSE")
+
+```
+
