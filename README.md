@@ -19,7 +19,7 @@
 ### Classify_Kepler 
 - The goal of this project is to do prediction on **Classification**
 - **Data Training** model usage:
-  1. **_Logistic Regression_**: Computed Area Under the Curve (AUC) to see the model's ability to discriminate between positive and negative classes across all possible threshold values. 
+  1. **_Logistic Regression_**: Computed the **_Confusion Matrix_** to check the model performance
   2. **_Random Forest_**: Plotted a Random Forest Variable Important Plot (VIP) to find out the ranking of the variable importance
   3. _**Gradient Boosting** **(xgboost)**_: Created a bar graph representing Gradiant boosting VIP
   4. **_K-Nearest Neighbour (KNN)_**: Plotted a MCR vs. k in KNN Classification to find the optimal number of nearest neighbor
@@ -28,6 +28,9 @@
   2.  Plotted a **_Receiver Operating Characteristic curve (ROC)_** of the above models and compare the **_Area Under the Curve (AUC)_**:
 <img width="702" alt="Screen Shot 2024-02-21 at 8 35 39 PM" src="https://github.com/anzowu527/Statistical-Learning-and-Modeling/assets/77874807/960b1842-ba0e-457d-8a8c-dec3e4447bf4">
 
-  
-### Diamond_Price_Prediction - Our Poster of the Project is available at: https://www.stat.cmu.edu/capstoneresearch/
+### Diamond_Price_Prediction 
+- Our Poster of the Project is available at: https://www.stat.cmu.edu/capstoneresearch/
+- The goal of the project is to predict diamond price by diamond's properties
+<img src="https://github.com/anzowu527/Statistical-Learning-and-Modeling/assets/77874807/1b0f65aa-9366-4255-8631-b56d2fcedeb5" width="900">
+
 
