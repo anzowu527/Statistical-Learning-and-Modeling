@@ -1,4 +1,4 @@
-# Statistical-Learning-and-Modeling 
+# Statistical-Learning-and-Modeling Projects
 ## Files in the Repository
 ### Examining_Bird_Diversity 
 - The goal of this project is to familierize with EDA, and explore the Bird Diversity data
